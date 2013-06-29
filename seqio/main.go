@@ -1,7 +1,7 @@
 package main
 
 import (
-	//	"fmt"
+	"fmt"
 	"github.com/cybersiddhu/gobio/seqio"
 	"os"
 )
@@ -9,7 +9,7 @@ import (
 func main() {
 	r := seqio.NewFastaReader(os.Args[1])
 	for r.HasEntry() {
-		//f := r.NextEntry()
-		//fmt.Fprintf(os.Stdout, "Entry>>>>\n Id:%s\tsequence:%s\n", f.Id, f.Sequence)
+		f := r.NextEntry()
+		fmt.Fprintf(os.Stdout, "Entry>>>>\n Id:%s\tsequence:%s\n", f.Id, f.Sequence)
 	}
 }
