@@ -50,35 +50,39 @@ func main() {
 	idx, err := gobam.LoadIndex(os.Args[1])
 	dieIfError(err)
 
-	cm := &CoverageMaker{
-		bam:   bam,
-		index: idx,
-		chunk: dumpSize,
+	lengths := bam.RefLengths()
+	cm := &CoverageHandler{
+		bam:     bam,
+		index:   idx,
+		chunk:   dumpSize,
+		binSize: binSize,
+		channel: make(chan *Coverage, len(lengths)),
 	}
 
 	for i, name := range bam.RefNames() {
-		lengths := bam.RefLengths()
 		if id, ok := bam.RefID(name); ok {
 
 			w, err := os.Create(name + ".wig")
 			dieIfError(err)
 			defer w.Close()
 
-			cov := cm.GenerateCoverage(id, int(lengths[i]))
 			wg.Add(1)
-			go WriteCoverage(w, name, binSize, cov)
+			go cm.Generate(id, int(lengths[i]))
+			go cm.Write(w, name)
 		}
 	}
 	wg.Wait()
 }
 
-type CoverageMaker struct {
-	bam   *gobam.BAMFile
-	index *gobam.Index
-	chunk int
+type CoverageHandler struct {
+	bam     *gobam.BAMFile
+	index   *gobam.Index
+	chunk   int
+	binSize int
+	channel chan *Coverage
 }
 
-func (cm *CoverageMaker) GenerateCoverage(id, length int) *Coverage {
+func (cm *CoverageHandler) Generate(id, length int) {
 	cov := InitCoverage(0, (length - 1))
 
 	for start := 0; start < length; start += cm.chunk {
@@ -91,10 +95,11 @@ func (cm *CoverageMaker) GenerateCoverage(id, length int) *Coverage {
 		_, err := cm.bam.Fetch(cm.index, id, start, end, cov.calculate)
 		dieIfError(err)
 	}
-	return cov
+	cm.channel <- cov
 }
 
-func WriteCoverage(w io.Writer, name string, binSize int, cov *Coverage) {
+func (cm *CoverageHandler) Write(w io.Writer, name string) {
+	cov := <-cm.channel
 	defer wg.Done()
 	var sortedLoc []int
 	for k := range cov.counter {
