@@ -3,8 +3,9 @@ package main
 import (
 	"fmt"
 	gobam "github.com/cybersiddhu/biogo.boom"
-	"io"
+	"log"
 	"os"
+	"runtime"
 	"sort"
 	"sync"
 )
@@ -44,11 +45,22 @@ func InitCoverage(start int, end int) *Coverage {
 }
 
 func main() {
+
+	log.Println("starting up")
 	bam, err := gobam.OpenBAM(os.Args[1])
 	dieIfError(err)
+	log.Println("got bam reader")
 
+
+	log.Println("before loading index")
 	idx, err := gobam.LoadIndex(os.Args[1])
 	dieIfError(err)
+	log.Println("loaded index")
+
+
+	log.Println("before maxprocs")
+	runtime.GOMAXPROCS(runtime.NumCPU())
+	log.Println("after maxprocs")
 
 	lengths := bam.RefLengths()
 	cm := &CoverageHandler{
@@ -61,14 +73,11 @@ func main() {
 
 	for i, name := range bam.RefNames() {
 		if id, ok := bam.RefID(name); ok {
-
-			w, err := os.Create(name + ".wig")
-			dieIfError(err)
-			defer w.Close()
-
+			log.Printf("before sending %s\n", name)
 			wg.Add(1)
 			go cm.Generate(id, int(lengths[i]))
-			go cm.Write(w, name)
+			log.Printf("before writing %s\n", name)
+			go cm.Write(name)
 		}
 	}
 	wg.Wait()
@@ -83,6 +92,7 @@ type CoverageHandler struct {
 }
 
 func (cm *CoverageHandler) Generate(id, length int) {
+	log.Printf("going to generate coverage for %d\n", id)
 	cov := InitCoverage(0, (length - 1))
 
 	for start := 0; start < length; start += cm.chunk {
@@ -95,21 +105,29 @@ func (cm *CoverageHandler) Generate(id, length int) {
 		_, err := cm.bam.Fetch(cm.index, id, start, end, cov.calculate)
 		dieIfError(err)
 	}
+	log.Printf("sending coverage for %d\n", id)
 	cm.channel <- cov
 }
 
-func (cm *CoverageHandler) Write(w io.Writer, name string) {
+func (cm *CoverageHandler) Write(name string) {
 	cov := <-cm.channel
+	log.Printf("receiving coverage for %s\n", name)
 	defer wg.Done()
 	var sortedLoc []int
 	for k := range cov.counter {
 		sortedLoc = append(sortedLoc, k)
 	}
 	sort.Ints(sortedLoc)
+
+	w, err := os.Create(name + ".wig")
+	dieIfError(err)
+	defer w.Close()
+
 	fmt.Fprintf(w, "fixedStep chrom=%s start=1 step=%d span=%d\n", name, binSize, binSize)
 	for _, k := range sortedLoc {
 		fmt.Fprintln(w, cov.counter[k])
 	}
+	log.Printf("done writing coverage for %s\n", name)
 }
 
 func dieIfError(e error) {
