@@ -3,18 +3,20 @@ package main
 import (
 	"fmt"
 	gobam "github.com/cybersiddhu/biogo.boom"
+	"io"
 	"os"
 	"sort"
+	"sync"
 )
 
 //default bin size in 1
 var binSize = 1
 var dumpSize = 10000
+var wg sync.WaitGroup
 
 type Coverage struct {
 	counter   map[int]int
 	calculate func(*gobam.Record) bool
-	location  chan int
 }
 
 func (c *Coverage) AddCoverage(pos int) {
@@ -28,14 +30,13 @@ func (c *Coverage) AddCoverage(pos int) {
 
 func InitCoverage(start int, end int) *Coverage {
 	c := new(Coverage)
-	c.location = make(chan int, 1000)
-	c.counter = make(map[int]int, end)
+	c.counter = make(map[int]int, end+1)
 	for i := start; i <= end; i += 1 {
 		c.counter[i] = 0
 	}
 	c.calculate = func(r *gobam.Record) bool {
 		for start := r.Start(); start <= r.End(); start += 1 {
-			c.location <- start
+			c.AddCoverage(start)
 		}
 		return false
 	}
@@ -60,29 +61,32 @@ func main() {
 
 			cov := InitCoverage(0, int(lengths[i]-1))
 
-			go func() {
-
-				for start := 0; start < int(lengths[i]); start += dumpSize {
-					// calculate end
-					//0 based indexing
-					end := start + dumpSize - 1
-					if end > int(lengths[i]) {
-						end = int(lengths[i])
-					}
-					_, err := bam.Fetch(idx, id, start, end, cov.calculate)
-					dieIfError(err)
-					cov.AddCoverage(<-cov.location)
+			for start := 0; start < int(lengths[i]); start += dumpSize {
+				// calculate end
+				//0 based indexing
+				end := start + dumpSize - 1
+				if end > int(lengths[i]) {
+					end = int(lengths[i])
 				}
-			}()
-			var sortedLoc []int
-			for k := range cov.counter {
-				sortedLoc = append(sortedLoc, k)
+				_, err := bam.Fetch(idx, id, start, end, cov.calculate)
+				dieIfError(err)
 			}
-			sort.Ints(sortedLoc)
-			for _, k := range sortedLoc {
-				fmt.Fprintln(w, cov.counter[k])
-			}
+			wg.Add(1)
+			go WriteCoverage(w, cov)
 		}
+	}
+	wg.Wait()
+}
+
+func WriteCoverage(w io.Writer, cov *Coverage) {
+	defer wg.Done()
+	var sortedLoc []int
+	for k := range cov.counter {
+		sortedLoc = append(sortedLoc, k)
+	}
+	sort.Ints(sortedLoc)
+	for _, k := range sortedLoc {
+		fmt.Fprintln(w, cov.counter[k])
 	}
 }
 
