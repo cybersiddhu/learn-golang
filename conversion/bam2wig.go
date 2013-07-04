@@ -6,23 +6,23 @@ import (
 	"log"
 	"os"
 	"runtime"
-	"sort"
 	"sync"
 )
 
 //default bin size in 1
 var binSize = 1
-var dumpSize = 10000
+var dumpSize = 50000
 var wg sync.WaitGroup
 
 type Coverage struct {
 	counter   map[int]int
 	calculate func(*gobam.Record) bool
+	end       int
 }
 
 func (c *Coverage) AddCoverage(pos int) {
 	if value, ok := c.counter[pos]; ok {
-		value = value + 1
+		value += 1
 		c.counter[pos] = value
 	} else {
 		c.counter[pos] = 1
@@ -32,9 +32,10 @@ func (c *Coverage) AddCoverage(pos int) {
 func InitCoverage(start int, end int) *Coverage {
 	c := new(Coverage)
 	c.counter = make(map[int]int, end+1)
-	for i := start; i <= end; i += 1 {
-		c.counter[i] = 0
-	}
+	c.end = end
+	//for i := start; i <= end; i += 1 {
+	//c.counter[i] = 0
+	//}
 	c.calculate = func(r *gobam.Record) bool {
 		for start := r.Start(); start <= r.End(); start += 1 {
 			c.AddCoverage(start)
@@ -46,21 +47,19 @@ func InitCoverage(start int, end int) *Coverage {
 
 func main() {
 
-	log.Println("starting up")
+	//log.Println("starting up")
 	bam, err := gobam.OpenBAM(os.Args[1])
 	dieIfError(err)
-	log.Println("got bam reader")
+	//log.Println("got bam reader")
 
-
-	log.Println("before loading index")
+	//log.Println("before loading index")
 	idx, err := gobam.LoadIndex(os.Args[1])
 	dieIfError(err)
-	log.Println("loaded index")
+	//log.Println("loaded index")
 
-
-	log.Println("before maxprocs")
+	//log.Println("before maxprocs")
 	runtime.GOMAXPROCS(runtime.NumCPU())
-	log.Println("after maxprocs")
+	//log.Println("after maxprocs")
 
 	lengths := bam.RefLengths()
 	cm := &CoverageHandler{
@@ -68,15 +67,15 @@ func main() {
 		index:   idx,
 		chunk:   dumpSize,
 		binSize: binSize,
-		channel: make(chan *Coverage, len(lengths)),
+		channel: make(chan *Coverage, 2),
 	}
 
 	for i, name := range bam.RefNames() {
 		if id, ok := bam.RefID(name); ok {
-			log.Printf("before sending %s\n", name)
+		//	log.Printf("before sending %s\n", name)
 			wg.Add(1)
 			go cm.Generate(id, int(lengths[i]))
-			log.Printf("before writing %s\n", name)
+		//	log.Printf("before writing %s\n", name)
 			go cm.Write(name)
 		}
 	}
@@ -113,19 +112,18 @@ func (cm *CoverageHandler) Write(name string) {
 	cov := <-cm.channel
 	log.Printf("receiving coverage for %s\n", name)
 	defer wg.Done()
-	var sortedLoc []int
-	for k := range cov.counter {
-		sortedLoc = append(sortedLoc, k)
-	}
-	sort.Ints(sortedLoc)
 
 	w, err := os.Create(name + ".wig")
 	dieIfError(err)
 	defer w.Close()
 
 	fmt.Fprintf(w, "fixedStep chrom=%s start=1 step=%d span=%d\n", name, binSize, binSize)
-	for _, k := range sortedLoc {
-		fmt.Fprintln(w, cov.counter[k])
+	for pos := 0; pos <= cov.end; pos += 1 {
+		if value, ok := cov.counter[pos]; ok {
+			fmt.Fprintln(w, value)
+		} else {
+			fmt.Fprintln(w, 0)
+		}
 	}
 	log.Printf("done writing coverage for %s\n", name)
 }
