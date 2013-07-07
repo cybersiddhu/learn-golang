@@ -6,20 +6,18 @@ import (
 	"log"
 	"os"
 	"runtime"
-	//"sync"
+	"sync"
 )
 
 //default bin size in 1
 var binSize = 1
-var dumpSize = 10000
-//var wg sync.WaitGroup
-var covStack map[string]*Coverage = make(map[string]*Coverage)
-//var covMap map[int]int = make(map[int]int)
+var dumpSize = 50000
+var wg sync.WaitGroup
 
 type Coverage struct {
-	counter map[int]int
-	end     int
-	name    string
+	counter   map[int]int
+	calculate func(*gobam.Record) bool
+	end       int
 }
 
 func (c *Coverage) AddCoverage(pos int) {
@@ -31,31 +29,20 @@ func (c *Coverage) AddCoverage(pos int) {
 	}
 }
 
-func InitCoverage(name string, end int) *Coverage {
+func InitCoverage(start int, end int) *Coverage {
 	c := new(Coverage)
-	c.name = name
 	c.counter = make(map[int]int, end+1)
 	c.end = end
 	//for i := start; i <= end; i += 1 {
 	//c.counter[i] = 0
 	//}
-	//c.calculate = func(r *gobam.Record) bool {
-	//for start := r.Start(); start <= r.End(); start += 1 {
-	//c.AddCoverage(start)
-	//}
-	//return false
-	//}
-	return c
-}
-
-func RecordAlignment(r *gobam.Record) bool {
-	if cov, ok := covStack[r.Name()]; ok {
+	c.calculate = func(r *gobam.Record) bool {
 		for start := r.Start(); start <= r.End(); start += 1 {
-			cov.AddCoverage(start)
-//			covMap[r.RefID()] = start
+			c.AddCoverage(start)
 		}
+		return false
 	}
-	return false
+	return c
 }
 
 func main() {
@@ -75,26 +62,24 @@ func main() {
 	//log.Println("after maxprocs")
 
 	lengths := bam.RefLengths()
-	//covStack = make(map[string]*Coverage, len(lengths))
 	cm := &CoverageHandler{
 		bam:     bam,
 		index:   idx,
 		chunk:   dumpSize,
 		binSize: binSize,
+		channel: make(chan *Coverage, 2),
 	}
 
 	for i, name := range bam.RefNames() {
 		if id, ok := bam.RefID(name); ok {
-			//	log.Printf("before sending %s\n", name)
-			cm.Generate(id, name, int(lengths[i]))
-			//	log.Printf("before writing %s\n", name)
+		//	log.Printf("before sending %s\n", name)
+			wg.Add(1)
+			go cm.Generate(id, int(lengths[i]))
+		//	log.Printf("before writing %s\n", name)
+			go cm.Write(name)
 		}
 	}
-	//for _, cov := range covStack {
-		//wg.Add(1)
-		//go cm.Write(cov)
-	//}
-	//wg.Wait()
+	wg.Wait()
 }
 
 type CoverageHandler struct {
@@ -102,12 +87,12 @@ type CoverageHandler struct {
 	index   *gobam.Index
 	chunk   int
 	binSize int
+	channel chan *Coverage
 }
 
-func (cm *CoverageHandler) Generate(id int, name string, length int) {
+func (cm *CoverageHandler) Generate(id, length int) {
 	log.Printf("going to generate coverage for %d\n", id)
-	cov := InitCoverage(name, (length - 1))
-	covStack[name] = cov
+	cov := InitCoverage(0, (length - 1))
 
 	for start := 0; start < length; start += cm.chunk {
 		// calculate end
@@ -116,21 +101,23 @@ func (cm *CoverageHandler) Generate(id int, name string, length int) {
 		if end > length {
 			end = length
 		}
-		_, err := cm.bam.Fetch(cm.index, id, start, end, RecordAlignment)
+		_, err := cm.bam.Fetch(cm.index, id, start, end, cov.calculate)
 		dieIfError(err)
 	}
-	log.Printf("finished coverage for %s\n", name)
+	log.Printf("sending coverage for %d\n", id)
+	cm.channel <- cov
 }
 
-func (cm *CoverageHandler) Write(cov *Coverage) {
-	log.Printf("receiving coverage for %s\n", cov.name)
-	//defer wg.Done()
+func (cm *CoverageHandler) Write(name string) {
+	cov := <-cm.channel
+	log.Printf("receiving coverage for %s\n", name)
+	defer wg.Done()
 
-	w, err := os.Create(cov.name + ".wig")
+	w, err := os.Create(name + ".wig")
 	dieIfError(err)
 	defer w.Close()
 
-	fmt.Fprintf(w, "fixedStep chrom=%s start=1 step=%d span=%d\n", cov.name, cm.binSize, cm.binSize)
+	fmt.Fprintf(w, "fixedStep chrom=%s start=1 step=%d span=%d\n", name, binSize, binSize)
 	for pos := 0; pos <= cov.end; pos += 1 {
 		if value, ok := cov.counter[pos]; ok {
 			fmt.Fprintln(w, value)
@@ -138,7 +125,7 @@ func (cm *CoverageHandler) Write(cov *Coverage) {
 			fmt.Fprintln(w, 0)
 		}
 	}
-	log.Printf("done writing coverage for %s\n", cov.name)
+	log.Printf("done writing coverage for %s\n", name)
 }
 
 func dieIfError(e error) {

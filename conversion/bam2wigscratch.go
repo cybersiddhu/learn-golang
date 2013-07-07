@@ -6,60 +6,40 @@ import (
 	"log"
 	"os"
 	"runtime"
-	//"sync"
+	"sync"
 )
+
+var wg sync.WaitGroup
 
 //default bin size in 1
 var binSize = 1
 var dumpSize = 10000
-//var wg sync.WaitGroup
-var covStack map[string]*Coverage = make(map[string]*Coverage)
-//var covMap map[int]int = make(map[int]int)
-
-type Coverage struct {
-	counter map[int]int
-	end     int
-	name    string
-}
-
-func (c *Coverage) AddCoverage(pos int) {
-	if value, ok := c.counter[pos]; ok {
-		value += 1
-		c.counter[pos] = value
-	} else {
-		c.counter[pos] = 1
-	}
-}
-
-func InitCoverage(name string, end int) *Coverage {
-	c := new(Coverage)
-	c.name = name
-	c.counter = make(map[int]int, end+1)
-	c.end = end
-	//for i := start; i <= end; i += 1 {
-	//c.counter[i] = 0
-	//}
-	//c.calculate = func(r *gobam.Record) bool {
-	//for start := r.Start(); start <= r.End(); start += 1 {
-	//c.AddCoverage(start)
-	//}
-	//return false
-	//}
-	return c
-}
+var covStack map[int]map[int]int = make(map[int]map[int]int)
 
 func RecordAlignment(r *gobam.Record) bool {
-	if cov, ok := covStack[r.Name()]; ok {
+	if stack, ok := covStack[r.RefID()]; ok {
 		for start := r.Start(); start <= r.End(); start += 1 {
-			cov.AddCoverage(start)
-//			covMap[r.RefID()] = start
+			if value, ok := stack[start]; ok {
+				value += 1
+				stack[start] = value
+			} else {
+				stack[start] = value
+			}
 		}
+		covStack[r.RefID()] = stack
+	} else {
+		stack := make(map[int]int)
+		for start := r.Start(); start <= r.End(); start += 1 {
+			stack[start] = 1 
+		}
+		covStack[r.RefID()] = stack
 	}
 	return false
 }
 
 func main() {
 
+	runtime.GOMAXPROCS(runtime.NumCPU() + 2)
 	//log.Println("starting up")
 	bam, err := gobam.OpenBAM(os.Args[1])
 	dieIfError(err)
@@ -71,7 +51,6 @@ func main() {
 	//log.Println("loaded index")
 
 	//log.Println("before maxprocs")
-	runtime.GOMAXPROCS(runtime.NumCPU())
 	//log.Println("after maxprocs")
 
 	lengths := bam.RefLengths()
@@ -83,18 +62,28 @@ func main() {
 		binSize: binSize,
 	}
 
+	var id2len map[int]int = make(map[int]int)
+	var id2name map[int]string = make(map[int]string)
+
 	for i, name := range bam.RefNames() {
 		if id, ok := bam.RefID(name); ok {
 			//	log.Printf("before sending %s\n", name)
-			cm.Generate(id, name, int(lengths[i]))
+			length := int(lengths[i])
+			id2len[id] = length
+			id2name[id] = name
+			cm.Generate(id, name, length)
 			//	log.Printf("before writing %s\n", name)
 		}
 	}
-	//for _, cov := range covStack {
-		//wg.Add(1)
-		//go cm.Write(cov)
-	//}
-	//wg.Wait()
+
+	for id, cov := range covStack {
+		if name, ok := id2name[id]; ok {
+			log.Printf("%s with length %d will have %d entries with read\n",name, id2len[id], len(cov))
+			wg.Add(1)
+			go cm.Write(name, id2len[id], cov)
+		}
+	}
+	wg.Wait()
 }
 
 type CoverageHandler struct {
@@ -105,9 +94,7 @@ type CoverageHandler struct {
 }
 
 func (cm *CoverageHandler) Generate(id int, name string, length int) {
-	log.Printf("going to generate coverage for %d\n", id)
-	cov := InitCoverage(name, (length - 1))
-	covStack[name] = cov
+	//log.Printf("going to generate coverage for %s\n", name)
 
 	for start := 0; start < length; start += cm.chunk {
 		// calculate end
@@ -119,26 +106,26 @@ func (cm *CoverageHandler) Generate(id int, name string, length int) {
 		_, err := cm.bam.Fetch(cm.index, id, start, end, RecordAlignment)
 		dieIfError(err)
 	}
-	log.Printf("finished coverage for %s\n", name)
+	log.Printf("finished coverage for %s with %d bases with read\n", name, len(covStack[id]))
 }
 
-func (cm *CoverageHandler) Write(cov *Coverage) {
-	log.Printf("receiving coverage for %s\n", cov.name)
-	//defer wg.Done()
+func (cm *CoverageHandler) Write(name string, length int, cov map[int]int) {
+	log.Printf("receiving coverage for %s\n", name)
+	defer wg.Done()
 
-	w, err := os.Create(cov.name + ".wig")
+	w, err := os.Create(name + ".wig")
 	dieIfError(err)
 	defer w.Close()
 
-	fmt.Fprintf(w, "fixedStep chrom=%s start=1 step=%d span=%d\n", cov.name, cm.binSize, cm.binSize)
-	for pos := 0; pos <= cov.end; pos += 1 {
-		if value, ok := cov.counter[pos]; ok {
+	fmt.Fprintf(w, "fixedStep chrom=%s start=1 step=%d span=%d\n", name, cm.binSize, cm.binSize)
+	for pos := 0; pos < length; pos += 1 {
+		if value, ok := cov[pos]; ok {
 			fmt.Fprintln(w, value)
 		} else {
 			fmt.Fprintln(w, 0)
 		}
 	}
-	log.Printf("done writing coverage for %s\n", cov.name)
+	log.Printf("done writing coverage for %s\n", name)
 }
 
 func dieIfError(e error) {
