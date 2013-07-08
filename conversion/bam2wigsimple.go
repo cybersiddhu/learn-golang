@@ -12,12 +12,9 @@ var dumpSize = 10000
 
 func main() {
 
-	//log.Println("starting up")
 	bam, err := gobam.OpenBAM(os.Args[1])
 	dieIfError(err)
-	//log.Println("got bam reader")
 
-	//log.Println("before loading index")
 	idx, err := gobam.LoadIndex(os.Args[1])
 	dieIfError(err)
 
