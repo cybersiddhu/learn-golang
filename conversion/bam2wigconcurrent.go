@@ -5,8 +5,8 @@ import (
 	gobam "github.com/cybersiddhu/biogo.boom"
 	"log"
 	"os"
-	"sync"
 	"runtime"
+	"sync"
 )
 
 //default bin size in 1
@@ -14,8 +14,8 @@ var wg sync.WaitGroup
 
 func main() {
 	binSize := 1
-	dumpSize := 10000
-	runtime.GOMAXPROCS(runtime.NumCPU())
+	dumpSize := 100000
+	runtime.GOMAXPROCS(4)
 
 	bam, err := gobam.OpenBAM(os.Args[1])
 	dieIfError(err)
