@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"testing"
 )
@@ -99,9 +100,41 @@ func TestParseFeature(t *testing.T) {
 			val := fm[key]
 			switch key {
 			case "seq_id":
-				 if val != "ctg123" {
-				 		t.Error("Unable to parse seq_id")
-				 }
+				if val != "ctg123" {
+					t.Error("Unable to parse seq_id")
+				}
+			case "type":
+				gtype, ok := val.(string)
+				if ok {
+					m, err := regexp.MatchString("gene|mRNA|CDS|exon", gtype)
+					if !m && err != nil {
+						t.Error("Unable to parse type")
+					}
+				} else {
+					t.Error("Unable to get a proper type assertion")
+				}
+			case "start", "end":
+				gloc, ok := val.(string)
+				if ok {
+					m, err := regexp.MatchString(`\d+`, gloc)
+					if !m && err != nil {
+						t.Error("Unable to parse location")
+					}
+				} else {
+					t.Error("Unable to get a proper type assertion")
+				}
+			case "attributes":
+				attr, ok := val.(map[string]string)
+				if ok {
+					for _, key := range attr {
+						m, err := regexp.MatchString("ID|Parent|Name", key)
+						if !m && err != nil {
+							t.Error("Unable to parse attr")
+						}
+					}
+				} else {
+					t.Error("Unable to get a proper type assertion")
+				}
 			}
 		}
 	}
