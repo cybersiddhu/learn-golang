@@ -7,6 +7,7 @@ import (
 	"regexp"
 	"strings"
 	"testing"
+	"github.com/cybersiddhu/golang-set"
 )
 
 func TestDirective(t *testing.T) {
@@ -124,12 +125,19 @@ func TestParseFeature(t *testing.T) {
 					t.Error("Unable to get a proper type assertion")
 				}
 			case "attributes":
-				attr, ok := val.(map[string]string)
+				attr, ok := val.(map[string][]string)
 				if ok {
-					for _, key := range attr {
+					set := mapset.NewSet()
+					for key := range attr {
 						m, err := regexp.MatchString("ID|Parent|Name", key)
 						if !m && err != nil {
 							t.Error("Unable to parse attr")
+						}
+						set.Add(key)
+						if set.ContainsAll([]string{"ID","Name"}){
+							 if attr["ID"][0] != "gene00001" && attr["Name"][0] != "EDEN" {
+							 		t.Error("Did not get correct value of attributes")
+							 }
 						}
 					}
 				} else {
