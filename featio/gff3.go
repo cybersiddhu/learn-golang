@@ -28,7 +28,7 @@ func ParseDirective(line string) map[string]interface{} {
 	return directive
 }
 
-func ParseFeature(line string) map[string][]string {
+func ParseFeature(line string) map[string]interface{} {
 	feat := make(map[string]interface{})
 	arr := strings.Split(line, "\t")
 

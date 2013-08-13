@@ -8,6 +8,7 @@ import (
 	"strings"
 	"testing"
 	"github.com/cybersiddhu/golang-set"
+	"io/ioutil"
 )
 
 func TestDirective(t *testing.T) {
@@ -134,7 +135,7 @@ func TestParseFeature(t *testing.T) {
 							t.Error("Unable to parse attr")
 						}
 						set.Add(key)
-						if set.ContainsAll([]string{"ID","Name"}){
+						if set.ContainsAll("ID","Name"){
 							 if attr["ID"][0] != "gene00001" && attr["Name"][0] != "EDEN" {
 							 		t.Error("Did not get correct value of attributes")
 							 }
@@ -145,5 +146,43 @@ func TestParseFeature(t *testing.T) {
 				}
 			}
 		}
+	}
+}
+
+func TestParseAttribute(t *testing.T) {
+	dir, err := os.Getwd()
+	if err != nil {
+		t.Error("Could not get current direcotry")
+	}
+
+	dirgff := filepath.Join(dir, "data", "attr.gff3")
+	content, err := ioutil.ReadFile(dirgff)
+	if err != nil {
+		t.Error("Could not open test file")
+	}
+
+	data := strings.Split(string(content),"\n")
+	firstLine := strings.Split(data[1], "\t")
+	attrMap := ParseAttribute(firstLine[8])
+
+	attrSet := mapset.NewSet()
+	for k := range attrMap {
+		 attrSet.Add(k)
+	}
+	if !attrSet.ContainsAll("ID","Dbxref","Alias","Note") {
+		 t.Error("Could not parse all the attributes")
+	}
+
+	if attrMap["ID"][0] != "A00469" {
+		 t.Error("Could not parse ID attribute")
+	}
+	if attrMap["Alias"][0] != "GH1" {
+		 t.Error("Could not parse Alias attribute")
+	}
+	if len(attrMap["Dbxref"]) != 7 {
+		 t.Error("Could not parse Dbxref attribute")
+		 if attrMap["Dbxref"][1] != "Locuslink:2688" {
+		 		t.Error("Could not parse value of Dbxref attribute")
+		 }
 	}
 }
